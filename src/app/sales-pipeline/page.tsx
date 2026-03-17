@@ -1,34 +1,115 @@
-import React from "react";
+"use client";
+
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { getPipelineStats, updateLeadStatus } from "@/app/actions/pipeline";
+import { LeadStatus } from "@prisma/client";
+import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+
+const STAGE_MAP: Record<
+  string,
+  { label: string; progress: string; stageNum: number }
+> = {
+  NEW: { label: "Discovery", progress: "20%", stageNum: 1 },
+  QUALIFIED: { label: "Qualified", progress: "40%", stageNum: 2 },
+  PROPOSAL: { label: "Proposal", progress: "60%", stageNum: 3 },
+  NEGOTIATION: { label: "Negotiation", progress: "80%", stageNum: 4 },
+  CLOSED: { label: "Closing", progress: "95%", stageNum: 5 },
+};
 
 export default function SalesPipeline() {
-  return (
-    <>
-      {/* Screen Content */}
-      {/*  Top Header  */}
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
 
-      {/*  Content Area  */}
-      <div className="p-8 space-y-8">
-        {/*  Summary Stats & Header  */}
-        <div className="flex flex-wrap items-end justify-between gap-6">
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const stats = await getPipelineStats();
+      setData(stats);
+    } catch (error) {
+      console.error("Failed to fetch pipeline stats:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleStatusUpdate = async (id: string, newStatus: LeadStatus) => {
+    // Optimistic update
+    const previousData = JSON.parse(JSON.stringify(data));
+
+    // Find lead and move it locally
+    const allLeads = [...data.allActiveLeads];
+    const leadIdx = allLeads.findIndex((l) => l.id === id);
+    if (leadIdx > -1) {
+      allLeads[leadIdx].status = newStatus;
+      // Refresh local pipeline stats (simplified)
+      const updatedPipelineData = data.pipelineData.map((stage: any) => {
+        const stageLeads = allLeads.filter((l) => l.status === stage.key);
+        return {
+          ...stage,
+          count: stageLeads.length,
+          value: stageLeads.reduce((sum, l) => sum + (l.value || 0), 0),
+          leads: stageLeads,
+        };
+      });
+      setData({
+        ...data,
+        allActiveLeads: allLeads,
+        pipelineData: updatedPipelineData,
+      });
+    }
+
+    const result = await updateLeadStatus(id, newStatus);
+    if (!result.success) {
+      alert("Failed to update status");
+      setData(previousData); // Rollback
+    } else {
+      fetchData(); // Sync with server truly
+    }
+  };
+
+  const onDragEnd = (result: any) => {
+    const { destination, source, draggableId } = result;
+
+    if (!destination) return;
+    if (destination.droppableId === source.droppableId) return;
+
+    handleStatusUpdate(draggableId, destination.droppableId as LeadStatus);
+  };
+
+  if (loading || !data) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-background-light dark:bg-background-dark">
+        <div className="text-center space-y-4">
+          <div className="size-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin mx-auto"></div>
+          <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">
+            Analyzing Funnel Velocity...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto w-full bg-background-light dark:bg-background-dark">
+      <div className="p-8 space-y-8 max-w-[1600px] mx-auto">
+        {/* Summary Stats & Header */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-1">
-            <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-              Strategic Pipeline Funnel
+            <h1 className="text-4xl font-black tracking-tight text-slate-900 dark:text-white uppercase">
+              Sales Pipeline
             </h1>
-            <p className="text-slate-500 dark:text-slate-400">
-              Analyze conversion rates and deal flow across quarterly stages
+            <p className="text-slate-500 dark:text-slate-400 font-medium">
+              Real-time strategic funnel analysis and deal progression matrix.
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex items-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-1">
-              <button className="px-4 py-1.5 text-xs font-semibold rounded-md bg-primary text-white shadow-sm">
-                Monthly
-              </button>
-              <button className="px-4 py-1.5 text-xs font-semibold rounded-md text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
-                Quarterly
-              </button>
-            </div>
-            <button className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-lg shadow-primary/20">
+            <button className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-primary/20">
               <span className="material-symbols-outlined text-sm">
                 download
               </span>
@@ -36,422 +117,361 @@ export default function SalesPipeline() {
             </button>
           </div>
         </div>
-        {/*  Pipeline Visualizer  */}
+
+        {/* Funnel Section */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/*  Main Funnel Graphic  */}
-          <div className="lg:col-span-3 bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800 p-6">
-            <div className="flex items-center justify-between mb-8">
+          <div className="lg:col-span-3 bg-white dark:bg-slate-900/50 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 shadow-sm">
+            <div className="flex items-center justify-between mb-10">
               <div>
-                <p className="text-sm font-medium text-slate-500">
-                  Conversion Funnel
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  Global Pipeline Value
                 </p>
-                <h3 className="text-2xl font-bold">$4.2M Total Value</h3>
+                <h3 className="text-3xl font-black text-slate-900 dark:text-white mt-1">
+                  ${data.totalPipelineValue.toLocaleString()}
+                </h3>
               </div>
               <div className="text-right">
-                <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded">
-                  +12% vs last month
+                <span className="text-[10px] font-black text-emerald-500 bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/20 uppercase tracking-widest">
+                  Active Growth +12%
                 </span>
               </div>
             </div>
-            {/*  CSS Funnel Representation  */}
-            <div className="flex h-40 gap-1 overflow-hidden rounded-lg">
-              <div className="flex-1 bg-primary/20 dark:bg-primary/10 flex flex-col justify-end p-4 border-r border-slate-200 dark:border-slate-800/50">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-primary mb-1">
-                  Discovery
-                </div>
-                <div className="h-3/4 bg-primary rounded-t-sm w-full relative group">
-                  <div className="absolute -top-6 left-0 text-xs font-bold">
-                    $1.8M
+
+            <div className="flex h-48 gap-3">
+              {data.pipelineData.map((stage: any, idx: number) => {
+                const opacity = 1 - idx * 0.15;
+                return (
+                  <div
+                    key={stage.key}
+                    className="flex-1 flex flex-col justify-end group"
+                  >
+                    <div className="text-center mb-2">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-0.5">
+                        {stage.label}
+                      </p>
+                      <p className="text-sm font-black text-slate-900 dark:text-white">
+                        ${(stage.value / 1000).toFixed(0)}K
+                      </p>
+                    </div>
+                    <div
+                      className="w-full bg-primary rounded-xl transition-all duration-700 ease-out group-hover:brightness-110 shadow-sm"
+                      style={{
+                        height: `${Math.min(100, 30 + (4 - idx) * 15)}%`,
+                        opacity: opacity,
+                      }}
+                    >
+                      <div className="p-3 text-center">
+                        <span className="text-[10px] font-black text-white/40">
+                          {stage.count} Deals
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-              <div className="flex-1 bg-primary/20 dark:bg-primary/10 flex flex-col justify-end p-4 border-r border-slate-200 dark:border-slate-800/50">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-primary mb-1">
-                  Qualified
-                </div>
-                <div className="h-2/3 bg-primary/80 rounded-t-sm w-full relative">
-                  <div className="absolute -top-6 left-0 text-xs font-bold">
-                    $1.2M
-                  </div>
-                </div>
-              </div>
-              <div className="flex-1 bg-primary/20 dark:bg-primary/10 flex flex-col justify-end p-4 border-r border-slate-200 dark:border-slate-800/50">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-primary mb-1">
-                  Proposal
-                </div>
-                <div className="h-1/2 bg-primary/60 rounded-t-sm w-full relative">
-                  <div className="absolute -top-6 left-0 text-xs font-bold">
-                    $840K
-                  </div>
-                </div>
-              </div>
-              <div className="flex-1 bg-primary/20 dark:bg-primary/10 flex flex-col justify-end p-4 border-r border-slate-200 dark:border-slate-800/50">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-primary mb-1">
-                  Negotiation
-                </div>
-                <div className="h-1/3 bg-primary/40 rounded-t-sm w-full relative">
-                  <div className="absolute -top-6 left-0 text-xs font-bold">
-                    $420K
-                  </div>
-                </div>
-              </div>
-              <div className="flex-1 bg-primary/20 dark:bg-primary/10 flex flex-col justify-end p-4">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-primary mb-1">
-                  Closing
-                </div>
-                <div className="h-1/5 bg-primary/20 rounded-t-sm w-full relative">
-                  <div className="absolute -top-6 left-0 text-xs font-bold">
-                    $140K
-                  </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
-            {/*  Conversion Labels  */}
-            <div className="flex mt-2 px-1">
-              <div className="flex-1 text-center py-2 text-[10px] font-bold text-slate-400">
-                68% Drop
-              </div>
-              <div className="flex-1 text-center py-2 text-[10px] font-bold text-slate-400">
-                45% Drop
-              </div>
-              <div className="flex-1 text-center py-2 text-[10px] font-bold text-slate-400">
-                32% Drop
-              </div>
-              <div className="flex-1 text-center py-2 text-[10px] font-bold text-slate-400">
-                18% Drop
-              </div>
+
+            <div className="flex mt-4">
+              {data.conversionRates.map((rate: any, i: number) => (
+                <div
+                  key={i}
+                  className="flex-1 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest"
+                >
+                  {Math.round(rate.rate)}% Conversion
+                </div>
+              ))}
               <div className="flex-1"></div>
             </div>
           </div>
-          {/*  Secondary Stats  */}
-          <div className="grid grid-cols-2 lg:grid-cols-1 gap-4">
-            <div className="bg-white dark:bg-slate-900/50 p-5 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
-              <p className="text-xs font-bold text-slate-500 uppercase">
-                Avg. Velocity
+
+          <div className="grid grid-cols-1 gap-4">
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-col justify-between shadow-sm">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Avg. Pipeline Velocity
               </p>
-              <div>
-                <h4 className="text-2xl font-black">14 Days</h4>
-                <p className="text-xs text-rose-500 font-bold flex items-center mt-1">
+              <div className="mt-4">
+                <h4 className="text-3xl font-black text-slate-900 dark:text-white">
+                  18 Days
+                </h4>
+                <p className="text-[10px] text-rose-500 font-bold flex items-center gap-1 mt-2 uppercase tracking-widest">
                   <span className="material-symbols-outlined text-sm">
                     trending_down
                   </span>
-                  -2% from prev month
+                  Slowing 2%
                 </p>
               </div>
             </div>
-            <div className="bg-white dark:bg-slate-900/50 p-5 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
-              <p className="text-xs font-bold text-slate-500 uppercase">
-                Win Rate
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-col justify-between shadow-sm">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Conversion Win Rate
               </p>
-              <div>
-                <h4 className="text-2xl font-black">64%</h4>
-                <p className="text-xs text-emerald-500 font-bold flex items-center mt-1">
+              <div className="mt-4">
+                <h4 className="text-3xl font-black text-slate-900 dark:text-white">
+                  42%
+                </h4>
+                <p className="text-[10px] text-emerald-500 font-bold flex items-center gap-1 mt-2 uppercase tracking-widest">
                   <span className="material-symbols-outlined text-sm">
                     trending_up
                   </span>
-                  +5.2% Overall
+                  Optimal Range
                 </p>
               </div>
             </div>
           </div>
         </div>
-        {/*  Pipeline Progress Board  */}
-        <div className="space-y-4">
+
+        {/* Progression Section */}
+        <div className="space-y-6">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold">Deal Progression Matrix</h3>
-            <div className="flex gap-2">
-              <button className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
-                <span className="material-symbols-outlined">filter_list</span>
+            <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">
+              Deal Progression Matrix
+            </h3>
+            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+              <button
+                onClick={() => setViewMode("list")}
+                className={`p-2 rounded-lg transition-all ${viewMode === "list" ? "bg-white dark:bg-slate-700 text-primary shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
+              >
+                <span className="material-symbols-outlined text-sm">
+                  view_list
+                </span>
               </button>
-              <button className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
-                <span className="material-symbols-outlined">view_kanban</span>
-              </button>
-              <button className="p-2 text-primary bg-primary/10 rounded">
-                <span className="material-symbols-outlined">view_list</span>
+              <button
+                onClick={() => setViewMode("kanban")}
+                className={`p-2 rounded-lg transition-all ${viewMode === "kanban" ? "bg-white dark:bg-slate-700 text-primary shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
+              >
+                <span className="material-symbols-outlined text-sm">
+                  view_kanban
+                </span>
               </button>
             </div>
           </div>
-          <div className="overflow-hidden bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800/30 border-b border-slate-200 dark:border-slate-800">
-                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Deal &amp; Client
-                  </th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Current Stage
-                  </th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Progress
-                  </th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Value
-                  </th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Stagnancy
-                  </th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Health
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {/*  Deal 1  */}
-                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold">
-                        TS
+
+          {viewMode === "list" ? (
+            <div className="bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden text-nowrap">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/30 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200 dark:border-slate-800">
+                    <th className="px-8 py-5">Prospect & Organization</th>
+                    <th className="px-8 py-5">Current Stage</th>
+                    <th className="px-8 py-5">Value Progression</th>
+                    <th className="px-8 py-5">Estimated Value</th>
+                    <th className="px-8 py-5">Age</th>
+                    <th className="px-8 py-5">Priority</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {data.allActiveLeads.map((lead: any) => {
+                    const stage = STAGE_MAP[lead.status] || {
+                      label: "Unknown",
+                      progress: "0%",
+                      stageNum: 0,
+                    };
+                    const ageInDays = Math.floor(
+                      (new Date().getTime() -
+                        new Date(lead.createdAt).getTime()) /
+                        (1000 * 3600 * 24),
+                    );
+                    return (
+                      <tr
+                        key={lead.id}
+                        className="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-all group"
+                      >
+                        <td className="px-8 py-5">
+                          <div className="flex items-center gap-4">
+                            <div className="size-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-primary font-black uppercase tracking-tighter">
+                              {lead.name.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-primary transition-colors">
+                                {lead.name}
+                              </p>
+                              <p className="text-[10px] text-slate-500 font-medium">
+                                {lead.company || "Individual Opportunity"}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-8 py-5">
+                          <select
+                            className="px-3 py-1 text-[10px] font-black rounded-lg bg-primary/10 text-primary border border-primary/20 uppercase tracking-widest outline-none cursor-pointer hover:bg-primary/20 transition-all"
+                            value={lead.status}
+                            onChange={(e) =>
+                              handleStatusUpdate(
+                                lead.id,
+                                e.target.value as LeadStatus,
+                              )
+                            }
+                          >
+                            {Object.keys(STAGE_MAP).map((s) => (
+                              <option key={s} value={s}>
+                                {STAGE_MAP[s].label}
+                              </option>
+                            ))}
+                            <option value="LOST">Lost</option>
+                          </select>
+                        </td>
+                        <td className="px-8 py-5">
+                          <div className="w-36">
+                            <div className="flex justify-between text-[10px] mb-1.5 font-black uppercase tracking-tighter text-primary">
+                              <span>{stage.progress} Complete</span>
+                              <span className="text-slate-400">
+                                #0{stage.stageNum}
+                              </span>
+                            </div>
+                            <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-primary transition-all duration-1000 shadow-[0_0_10px_rgba(var(--primary-rgb),0.5)]"
+                                style={{ width: stage.progress }}
+                              ></div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-8 py-5 font-black text-sm text-slate-900 dark:text-white">
+                          ${(lead.value || 0).toLocaleString()}
+                        </td>
+                        <td className="px-8 py-5 text-sm font-bold text-slate-700 dark:text-slate-300">
+                          {ageInDays} Days
+                        </td>
+                        <td className="px-8 py-5">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={`size-2 rounded-full ${lead.priority === "HIGH" ? "bg-rose-500" : lead.priority === "MEDIUM" ? "bg-amber-500" : "bg-emerald-500 animate-pulse"}`}
+                            ></div>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                              {lead.priority}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <DragDropContext onDragEnd={onDragEnd}>
+              <div className="flex gap-6 overflow-x-auto pb-6 custom-scrollbar min-h-[600px] -mx-8 px-8">
+                {data.pipelineData.map((stage: any) => (
+                  <Droppable key={stage.key} droppableId={stage.key}>
+                    {(provided) => (
+                      <div
+                        {...provided.droppableProps}
+                        ref={provided.innerRef}
+                        className="flex-shrink-0 w-[340px] flex flex-col gap-5 bg-slate-50/50 dark:bg-slate-900/40 p-4 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800"
+                      >
+                        <div className="flex items-center justify-between px-2">
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-900 dark:text-white">
+                              {stage.label}
+                            </h4>
+                            <span className="text-[9px] font-black bg-white dark:bg-slate-800 text-slate-400 px-2.5 py-1 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm">
+                              {stage.count}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-black text-primary">
+                            ${(stage.value / 1000).toFixed(0)}K
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col gap-4 min-h-[400px]">
+                          {stage.leads.map((lead: any, index: number) => (
+                            <Draggable
+                              key={lead.id}
+                              draggableId={lead.id}
+                              index={index}
+                            >
+                              {(provided, snapshot) => (
+                                <div
+                                  ref={provided.innerRef}
+                                  {...provided.draggableProps}
+                                  {...provided.dragHandleProps}
+                                  className={`bg-white dark:bg-slate-900 border p-5 rounded-2xl shadow-sm transition-all group ${snapshot.isDragging ? "border-primary ring-4 ring-primary/10 shadow-2xl scale-105 z-50" : "border-slate-200 dark:border-slate-800 hover:border-primary/40"}`}
+                                >
+                                  <div className="flex items-start justify-between mb-4">
+                                    <div
+                                      className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${lead.priority === "HIGH" ? "bg-rose-500/10 text-rose-500" : lead.priority === "MEDIUM" ? "bg-amber-500/10 text-amber-500" : "bg-emerald-500/10 text-emerald-500"}`}
+                                    >
+                                      {lead.priority}
+                                    </div>
+                                    <span className="text-[9px] font-black text-slate-300 uppercase">
+                                      #{lead.id.slice(-4)}
+                                    </span>
+                                  </div>
+                                  <h5 className="text-sm font-black text-slate-900 dark:text-white mb-1 group-hover:text-primary transition-colors">
+                                    {lead.name}
+                                  </h5>
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-5">
+                                    {lead.company || "Individual Opportunity"}
+                                  </p>
+
+                                  <div className="flex items-center justify-between pt-4 border-t border-slate-50 dark:border-slate-800/50">
+                                    <span className="text-sm font-black text-slate-900 dark:text-white">
+                                      ${(lead.value || 0).toLocaleString()}
+                                    </span>
+                                    <div className="flex items-center gap-1.5 grayscale opacity-30 group-hover:grayscale-0 group-hover:opacity-100 transition-all">
+                                      <span className="material-symbols-outlined text-sm">
+                                        drag_indicator
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </Draggable>
+                          ))}
+                          {provided.placeholder}
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-sm font-bold">
-                          TechSolutions Enterprise
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          Cloud Migration Project
-                        </p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="px-2.5 py-1 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                      Negotiation
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="w-32">
-                      <div className="flex justify-between text-[10px] mb-1 font-bold">
-                        <span>80%</span>
-                        <span className="text-slate-400">Stage 4 of 5</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-primary"
-                          style={{ width: "80%" }}
-                        ></div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm font-bold">$245,000</p>
-                    <p className="text-[10px] text-slate-400">
-                      Expected Nov 20
-                    </p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm">2 Days</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                      <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                        Stable
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-                {/*  Deal 2  */}
-                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 dark:text-purple-400 font-bold">
-                        GM
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold">Global Media Group</p>
-                        <p className="text-xs text-slate-500">
-                          Ad-Tech Integration
-                        </p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="px-2.5 py-1 text-[10px] font-bold rounded-full bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
-                      Proposal
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="w-32">
-                      <div className="flex justify-between text-[10px] mb-1 font-bold">
-                        <span>60%</span>
-                        <span className="text-slate-400">Stage 3 of 5</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-primary"
-                          style={{ width: "60%" }}
-                        ></div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm font-bold">$112,000</p>
-                    <p className="text-[10px] text-slate-400">
-                      Expected Dec 05
-                    </p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm text-rose-500 font-bold">14 Days</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-rose-500"></div>
-                      <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                        At Risk
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-                {/*  Deal 3  */}
-                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 font-bold">
-                        AP
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold">
-                          Apex Pharmaceuticals
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          CRM Implementation
-                        </p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="px-2.5 py-1 text-[10px] font-bold rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20">
-                      Discovery
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="w-32">
-                      <div className="flex justify-between text-[10px] mb-1 font-bold">
-                        <span>20%</span>
-                        <span className="text-slate-400">Stage 1 of 5</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-primary"
-                          style={{ width: "20%" }}
-                        ></div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm font-bold">$85,000</p>
-                    <p className="text-[10px] text-slate-400">
-                      Expected Jan 15
-                    </p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm">4 Days</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                      <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                        Early
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-                {/*  Deal 4  */}
-                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center text-orange-600 dark:text-orange-400 font-bold">
-                        ZL
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold">Zenith Logistics</p>
-                        <p className="text-xs text-slate-500">
-                          Fleet Management System
-                        </p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="px-2.5 py-1 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                      Closing
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="w-32">
-                      <div className="flex justify-between text-[10px] mb-1 font-bold">
-                        <span>95%</span>
-                        <span className="text-slate-400">Stage 5 of 5</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-primary"
-                          style={{ width: "95%" }}
-                        ></div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm font-bold">$42,000</p>
-                    <p className="text-[10px] text-slate-400">
-                      Expected Oct 31
-                    </p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-sm">1 Day</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                      <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                        High Confidence
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+                    )}
+                  </Droppable>
+                ))}
+              </div>
+            </DragDropContext>
+          )}
         </div>
-        {/*  Funnel Insights Cards  */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="p-6 rounded-xl bg-primary/5 border border-primary/20 flex gap-4">
-            <div className="bg-primary/20 p-3 rounded-lg h-fit text-primary">
+
+        {/* Insights Section */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
+          <div className="p-8 rounded-3xl bg-primary/5 border border-primary/20 flex gap-5 shadow-sm">
+            <div className="bg-primary/20 p-4 rounded-2xl h-fit text-primary">
               <span className="material-symbols-outlined">lightbulb</span>
             </div>
             <div>
-              <h4 className="font-bold text-sm">Leakage Point Detected</h4>
-              <p className="text-xs text-slate-500 mt-1">
-                45% of deals are stalling at 'Proposal' stage for more than 14
-                days. Consider revising proposal templates.
+              <h4 className="font-black text-sm uppercase tracking-tight text-slate-900 dark:text-white">
+                Leakage Analysis
+              </h4>
+              <p className="text-xs text-slate-500 mt-2 font-medium leading-relaxed">
+                Higher than average drop-off detected at the 'Proposal' stage.
               </p>
             </div>
           </div>
-          <div className="p-6 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex gap-4">
-            <div className="bg-emerald-500/20 p-3 rounded-lg h-fit text-emerald-500">
+          <div className="p-8 rounded-3xl bg-emerald-500/5 border border-emerald-500/20 flex gap-5 shadow-sm">
+            <div className="bg-emerald-500/20 p-4 rounded-2xl h-fit text-emerald-500">
               <span className="material-symbols-outlined">auto_graph</span>
             </div>
             <div>
-              <h4 className="font-bold text-sm">Velocity Improving</h4>
-              <p className="text-xs text-slate-500 mt-1">
-                Average time in 'Discovery' has decreased by 3 days since last
-                quarter. Sales training is showing ROI.
+              <h4 className="font-black text-sm uppercase tracking-tight text-slate-900 dark:text-white">
+                Velocity Insight
+              </h4>
+              <p className="text-xs text-slate-500 mt-2 font-medium leading-relaxed">
+                Qualified to Proposal speed has increased by 14% this month.
               </p>
             </div>
           </div>
-          <div className="p-6 rounded-xl bg-amber-500/5 border border-amber-500/20 flex gap-4">
-            <div className="bg-amber-500/20 p-3 rounded-lg h-fit text-amber-500">
+          <div className="p-8 rounded-3xl bg-amber-500/5 border border-amber-500/20 flex gap-5 shadow-sm">
+            <div className="bg-amber-500/20 p-4 rounded-2xl h-fit text-amber-500">
               <span className="material-symbols-outlined">priority_high</span>
             </div>
             <div>
-              <h4 className="font-bold text-sm">Value Concentration</h4>
-              <p className="text-xs text-slate-500 mt-1">
-                60% of total pipeline value is held in top 3 accounts. High
-                dependency risk for Q4 targets.
+              <h4 className="font-black text-sm uppercase tracking-tight text-slate-900 dark:text-white">
+                Risk Advisory
+              </h4>
+              <p className="text-xs text-slate-500 mt-2 font-medium leading-relaxed">
+                72% of pipeline value concentrated in 3 major accounts.
               </p>
             </div>
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
