@@ -99,13 +99,20 @@ model Lead {
   id        String     @id @default(cuid())
   name      String
   email     String?
+  phone     String?
   company   String?
   status    LeadStatus @default(NEW)
+  priority  Priority   @default(MEDIUM)
+  source    String?
   value     Float?
   userId    String
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   user      User       @relation(fields: [userId], references: [id])
+
+  @@index([name])
+  @@index([email])
+  @@index([status])
 }
 
 model Customer {

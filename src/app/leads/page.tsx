@@ -1,284 +1,363 @@
-import React from 'react';
-import Link from 'next/link';
+"use client";
 
-export default function LeadManagement() {
+import React, { useState, useEffect, useCallback, useTransition } from "react";
+import Link from "next/link";
+import {
+  getLeads,
+  deleteLead,
+  getLeadStats,
+  convertLeadToCustomer,
+} from "@/app/actions/leads";
+import { LeadStatus, Priority } from "@prisma/client";
+
+const STATUS_COLORS: Record<string, string> = {
+  NEW: "bg-blue-100 dark:bg-blue-500/10 text-blue-800 dark:text-blue-400",
+  QUALIFIED:
+    "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-800 dark:text-emerald-400",
+  PROPOSAL:
+    "bg-purple-100 dark:bg-purple-500/10 text-purple-800 dark:text-purple-400",
+  NEGOTIATION:
+    "bg-amber-100 dark:bg-amber-500/10 text-amber-800 dark:text-amber-400",
+  CLOSED:
+    "bg-slate-100 dark:bg-slate-500/10 text-slate-800 dark:text-slate-400",
+  LOST: "bg-red-100 dark:bg-red-500/10 text-red-800 dark:text-red-400",
+};
+
+const PRIORITY_COLORS: Record<string, string> = {
+  HIGH: "text-rose-500",
+  MEDIUM: "text-amber-500",
+  LOW: "text-emerald-500",
+};
+
+export default function LeadsDirectory() {
+  const [leads, setLeads] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>({
+    totalCount: 0,
+    newLeads: 0,
+    qualifiedLeads: 0,
+    totalValue: 0,
+  });
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<LeadStatus | "">("");
+  const [isPending, startTransition] = useTransition();
+
+  const fetchData = useCallback(
+    async (
+      pageNum: number,
+      searchVal: string,
+      statusVal: any,
+      isNewSearch: boolean,
+    ) => {
+      if (isNewSearch) setLoading(true);
+      else setLoadingMore(true);
+
+      try {
+        const data = await getLeads({
+          page: pageNum,
+          search: searchVal,
+          status: statusVal || undefined,
+          pageSize: 15,
+        });
+
+        if (isNewSearch) {
+          setLeads(data.leads);
+        } else {
+          setLeads((prev) => [...prev, ...data.leads]);
+        }
+
+        setTotalPages(data.totalPages);
+
+        if (isNewSearch) {
+          const statsData = await getLeadStats();
+          setStats(statsData);
+        }
+      } catch (error) {
+        console.error("Failed to fetch leads:", error);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setPage(1);
+      fetchData(1, search, statusFilter, true);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search, statusFilter, fetchData]);
+
+  const handleScroll = (e: any) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.target;
+    if (
+      scrollHeight - scrollTop <= clientHeight + 100 &&
+      !loadingMore &&
+      page < totalPages
+    ) {
+      const nextPage = page + 1;
+      setPage(nextPage);
+      fetchData(nextPage, search, statusFilter, false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (confirm("Are you sure you want to delete this lead?")) {
+      const result = await deleteLead(id);
+      if (result.success) {
+        fetchData(1, search, statusFilter, true);
+      } else {
+        alert(result.error);
+      }
+    }
+  };
+
+  const handleConvert = async (id: string) => {
+    if (confirm("Convert this lead to a customer?")) {
+      startTransition(async () => {
+        const result = await convertLeadToCustomer(id);
+        if (result.success) {
+          alert("Lead successfully converted to customer!");
+          fetchData(1, search, statusFilter, true);
+        } else {
+          alert(result.error);
+        }
+      });
+    }
+  };
+
   return (
-    <>
-      {/* Screen Content */}
-      {/*  Top Navbar  */}
+    <div
+      onScroll={handleScroll}
+      className="flex-1 overflow-y-auto p-6 space-y-6 bg-background-light dark:bg-background-dark"
+    >
+      <section>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-3xl font-black text-slate-900 dark:text-white uppercase tracking-tight">
+              Leads Pipeline
+            </h2>
+            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 font-medium">
+              Manage {stats.totalCount} active leads in your sales funnel.
+            </p>
+          </div>
+          <Link
+            href="/leads/new"
+            className="flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:opacity-90 transition-all shadow-lg shadow-primary/20"
+          >
+            <span className="material-symbols-outlined text-[20px]">add</span>
+            Create Lead
+          </Link>
+        </div>
 
-{/*  Page Body  */}
-<div className="flex-1 overflow-y-auto p-8">
-{/*  Page Header & Actions  */}
-<div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-<div>
-<h2 className="text-2xl font-bold tracking-tight">Leads</h2>
-<p className="text-slate-500 dark:text-slate-400">Manage and track your potential customers</p>
-</div>
-<div className="flex items-center gap-3">
-<button className="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-800 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-<span className="material-symbols-outlined text-[18px]">upload</span>
-                            Export
-                        </button>
-<button className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm shadow-primary/20">
-<span className="material-symbols-outlined text-[18px]">add</span>
-                            Add New Lead
-                        </button>
-</div>
-</div>
-{/*  Filters Bar  */}
-<div className="bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-800 rounded-xl p-4 mb-6 shadow-sm">
-<div className="flex flex-wrap items-center gap-4">
-<div className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-medium cursor-pointer">
-<span className="text-slate-500">Source:</span>
-<span>All Channels</span>
-<span className="material-symbols-outlined text-[16px]">expand_more</span>
-</div>
-<div className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-medium cursor-pointer">
-<span className="text-slate-500">Status:</span>
-<span>Active Leads</span>
-<span className="material-symbols-outlined text-[16px]">expand_more</span>
-</div>
-<div className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-medium cursor-pointer">
-<span className="text-slate-500">Rep:</span>
-<span>Team Alpha</span>
-<span className="material-symbols-outlined text-[16px]">expand_more</span>
-</div>
-<div className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-medium cursor-pointer">
-<span className="text-slate-500">Last Contact:</span>
-<span>Last 30 Days</span>
-<span className="material-symbols-outlined text-[16px]">expand_more</span>
-</div>
-<div className="ml-auto flex items-center gap-2 text-xs font-medium text-primary cursor-pointer hover:underline">
-<span className="material-symbols-outlined text-[16px]">filter_list</span>
-                            More Filters
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+          <div className="bg-white dark:bg-slate-900/50 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4 group hover:border-primary/20 transition-all">
+            <div className="size-14 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
+              <span className="material-symbols-outlined text-[32px]">
+                filter_alt
+              </span>
+            </div>
+            <div>
+              <p className="text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-widest">
+                Pipeline Value
+              </p>
+              <h3 className="text-xl font-black dark:text-white">
+                ${stats.totalValue.toLocaleString()}
+              </h3>
+            </div>
+          </div>
+          <div className="bg-white dark:bg-slate-900/50 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4 group hover:border-primary/20 transition-all">
+            <div className="size-14 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
+              <span className="material-symbols-outlined text-[32px]">
+                bolt
+              </span>
+            </div>
+            <div>
+              <p className="text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-widest">
+                Qualified Leads
+              </p>
+              <h3 className="text-xl font-black dark:text-white">
+                {stats.qualifiedLeads} Active
+              </h3>
+            </div>
+          </div>
+          <div className="bg-white dark:bg-slate-900/50 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-4 group hover:border-primary/20 transition-all">
+            <div className="size-14 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-500 group-hover:scale-110 transition-transform">
+              <span className="material-symbols-outlined text-[32px]">
+                new_releases
+              </span>
+            </div>
+            <div>
+              <p className="text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-widest">
+                New Today
+              </p>
+              <h3 className="text-xl font-black dark:text-white">
+                +{stats.newLeads} Incoming
+              </h3>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+          <div className="px-6 py-5 border-b border-slate-200 dark:border-slate-800 flex flex-col md:flex-row items-center gap-4 bg-slate-50/50 dark:bg-slate-800/20">
+            <div className="flex-1 w-full relative">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                search
+              </span>
+              <input
+                type="text"
+                placeholder="Search by lead name, company or email..."
+                className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm focus:ring-2 focus:ring-primary/50 transition-all outline-none font-medium text-slate-700 dark:text-slate-200"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <select
+                className="flex-1 md:w-48 px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold uppercase tracking-widest outline-none transition-all"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+              >
+                <option value="">All Statuses</option>
+                {Object.keys(LeadStatus).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-slate-50 dark:bg-slate-900/80 text-slate-400 text-[10px] font-black uppercase tracking-widest">
+                <tr>
+                  <th className="px-6 py-5">Lead Contact</th>
+                  <th className="px-6 py-5">Company</th>
+                  <th className="px-6 py-5">Status</th>
+                  <th className="px-6 py-5">Value</th>
+                  <th className="px-6 py-5">Priority</th>
+                  <th className="px-6 py-5"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-20 text-center">
+                      <div className="size-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin mx-auto"></div>
+                    </td>
+                  </tr>
+                ) : leads.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="px-6 py-20 text-center text-slate-400 font-medium italic"
+                    >
+                      No leads found matching your criteria.
+                    </td>
+                  </tr>
+                ) : (
+                  leads.map((lead) => (
+                    <tr
+                      key={lead.id}
+                      className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-all group"
+                    >
+                      <td className="px-6 py-4">
+                        <Link
+                          href={`/leads/${lead.id}`}
+                          className="flex items-center gap-3"
+                        >
+                          <div className="size-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-primary font-black uppercase tracking-tighter">
+                            {lead.name.charAt(0)}
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-primary transition-colors">
+                              {lead.name}
+                            </span>
+                            <span className="text-[10px] font-medium text-slate-500">
+                              {lead.email}
+                            </span>
+                          </div>
+                        </Link>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                          {lead.company || "Individual"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${STATUS_COLORS[lead.status]}`}
+                        >
+                          {lead.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm font-black text-slate-900 dark:text-white">
+                          ${(lead.value || 0).toLocaleString()}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`material-symbols-outlined text-[18px] ${PRIORITY_COLORS[lead.priority]}`}
+                          >
+                            priority_high
+                          </span>
+                          <span className="text-xs font-bold uppercase tracking-tight text-slate-500">
+                            {lead.priority}
+                          </span>
                         </div>
-</div>
-</div>
-{/*  Leads Table  */}
-<div className="bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
-<div className="overflow-x-auto">
-<table className="w-full text-left border-collapse">
-<thead>
-<tr className="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-<th className="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Lead Name</th>
-<th className="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Source</th>
-<th className="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Status</th>
-<th className="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Sales Rep</th>
-<th className="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Last Contact</th>
-<th className="px-6 py-4 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Actions</th>
-</tr>
-</thead>
-<tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-{/*  Row 1  */}
-<tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-<td className="px-6 py-4">
-<div className="flex items-center gap-3">
-<div className="size-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-<span className="material-symbols-outlined text-slate-400">person</span>
-</div>
-<div>
-<p className="text-sm font-semibold">Sarah Jenkins</p>
-<p className="text-xs text-slate-500">sarah.j@techflow.com</p>
-</div>
-</div>
-</td>
-<td className="px-6 py-4">
-<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                                            Website
-                                        </span>
-</td>
-<td className="px-6 py-4">
-<div className="flex items-center gap-2">
-<div className="size-2 rounded-full bg-green-500"></div>
-<span className="text-sm font-medium">Contacted</span>
-</div>
-</td>
-<td className="px-6 py-4">
-<div className="flex items-center gap-2">
-<div className="size-6 rounded-full bg-orange-500 text-[10px] text-white flex items-center justify-center font-bold">MK</div>
-<span className="text-sm">Marcus K.</span>
-</div>
-</td>
-<td className="px-6 py-4">
-<p className="text-sm">Oct 24, 2023</p>
-<p className="text-xs text-slate-500">2:45 PM</p>
-</td>
-<td className="px-6 py-4">
-<button className="text-slate-400 hover:text-primary transition-colors">
-<span className="material-symbols-outlined">more_vert</span>
-</button>
-</td>
-</tr>
-{/*  Row 2  */}
-<tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-<td className="px-6 py-4">
-<div className="flex items-center gap-3">
-<div className="size-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-<span className="material-symbols-outlined text-slate-400">person</span>
-</div>
-<div>
-<p className="text-sm font-semibold">David Chen</p>
-<p className="text-xs text-slate-500">d.chen@apexcorp.io</p>
-</div>
-</div>
-</td>
-<td className="px-6 py-4">
-<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400">
-                                            LinkedIn
-                                        </span>
-</td>
-<td className="px-6 py-4">
-<div className="flex items-center gap-2">
-<div className="size-2 rounded-full bg-amber-500"></div>
-<span className="text-sm font-medium">In Progress</span>
-</div>
-</td>
-<td className="px-6 py-4">
-<div className="flex items-center gap-2">
-<div className="size-6 rounded-full bg-blue-500 text-[10px] text-white flex items-center justify-center font-bold">SL</div>
-<span className="text-sm">Sophia L.</span>
-</div>
-</td>
-<td className="px-6 py-4">
-<p className="text-sm">Oct 23, 2023</p>
-<p className="text-xs text-slate-500">10:15 AM</p>
-</td>
-<td className="px-6 py-4">
-<button className="text-slate-400 hover:text-primary transition-colors">
-<span className="material-symbols-outlined">more_vert</span>
-</button>
-</td>
-</tr>
-{/*  Row 3  */}
-<tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-<td className="px-6 py-4">
-<div className="flex items-center gap-3">
-<div className="size-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-<span className="material-symbols-outlined text-slate-400">person</span>
-</div>
-<div>
-<p className="text-sm font-semibold">Emma Thompson</p>
-<p className="text-xs text-slate-500">emma.t@brightside.net</p>
-</div>
-</div>
-</td>
-<td className="px-6 py-4">
-<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
-                                            Referral
-                                        </span>
-</td>
-<td className="px-6 py-4">
-<div className="flex items-center gap-2">
-<div className="size-2 rounded-full bg-slate-300 dark:bg-slate-600"></div>
-<span className="text-sm font-medium">New</span>
-</div>
-</td>
-<td className="px-6 py-4">
-<div className="flex items-center gap-2">
-<div className="size-6 rounded-full bg-indigo-500 text-[10px] text-white flex items-center justify-center font-bold">JT</div>
-<span className="text-sm">James T.</span>
-</div>
-</td>
-<td className="px-6 py-4">
-<p className="text-sm text-slate-400">Never</p>
-</td>
-<td className="px-6 py-4">
-<button className="text-slate-400 hover:text-primary transition-colors">
-<span className="material-symbols-outlined">more_vert</span>
-</button>
-</td>
-</tr>
-{/*  Row 4  */}
-<tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-<td className="px-6 py-4">
-<div className="flex items-center gap-3">
-<div className="size-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-<span className="material-symbols-outlined text-slate-400">person</span>
-</div>
-<div>
-<p className="text-sm font-semibold">Robert Miller</p>
-<p className="text-xs text-slate-500">robert@miller-dev.com</p>
-</div>
-</div>
-</td>
-<td className="px-6 py-4">
-<span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400">
-                                            Cold Call
-                                        </span>
-</td>
-<td className="px-6 py-4">
-<div className="flex items-center gap-2">
-<div className="size-2 rounded-full bg-red-500"></div>
-<span className="text-sm font-medium">Lost</span>
-</div>
-</td>
-<td className="px-6 py-4">
-<div className="flex items-center gap-2">
-<div className="size-6 rounded-full bg-orange-500 text-[10px] text-white flex items-center justify-center font-bold">MK</div>
-<span className="text-sm">Marcus K.</span>
-</div>
-</td>
-<td className="px-6 py-4">
-<p className="text-sm">Oct 20, 2023</p>
-<p className="text-xs text-slate-500">04:30 PM</p>
-</td>
-<td className="px-6 py-4">
-<button className="text-slate-400 hover:text-primary transition-colors">
-<span className="material-symbols-outlined">more_vert</span>
-</button>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
-{/*  Pagination  */}
-<div className="px-6 py-4 bg-slate-50/50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
-<p className="text-xs text-slate-500 font-medium">Showing 1 to 4 of 120 leads</p>
-<div className="flex items-center gap-2">
-<button className="p-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-400 disabled:opacity-50">
-<span className="material-symbols-outlined text-[18px]">chevron_left</span>
-</button>
-<button className="px-3 py-1 rounded border border-primary bg-primary text-white text-xs font-bold">1</button>
-<button className="px-3 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-700">2</button>
-<button className="px-3 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-700">3</button>
-<button className="p-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-400">
-<span className="material-symbols-outlined text-[18px]">chevron_right</span>
-</button>
-</div>
-</div>
-</div>
-{/*  Footer Summary Cards  */}
-<div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-<div className="p-4 bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm flex items-center gap-4">
-<div className="size-12 rounded-full bg-primary/10 flex items-center justify-center">
-<span className="material-symbols-outlined text-primary">trending_up</span>
-</div>
-<div>
-<p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Conversion Rate</p>
-<p className="text-xl font-bold">24.5%</p>
-</div>
-</div>
-<div className="p-4 bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm flex items-center gap-4">
-<div className="size-12 rounded-full bg-green-500/10 flex items-center justify-center">
-<span className="material-symbols-outlined text-green-500">add_task</span>
-</div>
-<div>
-<p className="text-xs text-slate-500 font-medium uppercase tracking-wider">New Leads (Today)</p>
-<p className="text-xl font-bold">18</p>
-</div>
-</div>
-<div className="p-4 bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm flex items-center gap-4">
-<div className="size-12 rounded-full bg-amber-500/10 flex items-center justify-center">
-<span className="material-symbols-outlined text-amber-500">schedule</span>
-</div>
-<div>
-<p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Avg. Response Time</p>
-<p className="text-xl font-bold">2h 15m</p>
-</div>
-</div>
-</div>
-</div>
-    </>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => handleConvert(lead.id)}
+                            className="p-2 text-slate-400 hover:text-emerald-500 transition-colors"
+                            title="Convert to Customer"
+                          >
+                            <span className="material-symbols-outlined text-sm">
+                              person_add
+                            </span>
+                          </button>
+                          <Link
+                            href={`/leads/${lead.id}`}
+                            className="p-2 text-slate-400 hover:text-primary transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-sm">
+                              visibility
+                            </span>
+                          </Link>
+                          <button
+                            onClick={() => handleDelete(lead.id)}
+                            className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-sm">
+                              delete
+                            </span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {loadingMore && (
+            <div className="p-8 text-center border-t border-slate-100 dark:border-slate-800">
+              <div className="inline-block size-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
