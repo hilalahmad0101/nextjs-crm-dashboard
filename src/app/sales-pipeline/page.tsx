@@ -21,9 +21,10 @@ export default function SalesPipeline() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const [hasMounted, setHasMounted] = useState(false);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const stats = await getPipelineStats();
       setData(stats);
@@ -35,6 +36,7 @@ export default function SalesPipeline() {
   }, []);
 
   useEffect(() => {
+    setHasMounted(true);
     fetchData();
   }, [fetchData]);
 
@@ -69,7 +71,7 @@ export default function SalesPipeline() {
       alert("Failed to update status");
       setData(previousData); // Rollback
     } else {
-      fetchData(); // Sync with server truly
+      fetchData(true); // Silent update
     }
   };
 
@@ -348,7 +350,7 @@ export default function SalesPipeline() {
                 </tbody>
               </table>
             </div>
-          ) : (
+          ) : hasMounted ? (
             <DragDropContext onDragEnd={onDragEnd}>
               <div className="flex gap-6 overflow-x-auto pb-6 custom-scrollbar min-h-[600px] -mx-8 px-8">
                 {data.pipelineData.map((stage: any) => (
@@ -426,6 +428,10 @@ export default function SalesPipeline() {
                 ))}
               </div>
             </DragDropContext>
+          ) : (
+            <div className="flex-1 flex items-center justify-center p-20">
+              <div className="size-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+            </div>
           )}
         </div>
 

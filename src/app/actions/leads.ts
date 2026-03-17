@@ -168,6 +168,16 @@ export async function convertLeadToCustomer(leadId: string) {
                 }
             });
 
+            // Create an initial Deal for this customer
+            await tx.deal.create({
+                data: {
+                    title: `${lead.name} - Initial Deal`,
+                    value: lead.value || 0,
+                    customerId: customer.id,
+                    status: "OPEN"
+                }
+            });
+
             // Update Lead status to CLOSED
             await tx.lead.update({
                 where: { id: leadId },
@@ -176,6 +186,7 @@ export async function convertLeadToCustomer(leadId: string) {
 
             revalidatePath("/customers");
             revalidatePath("/leads");
+            revalidatePath("/deals");
             return { success: true, customerId: customer.id };
         });
     } catch (error: any) {
